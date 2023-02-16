@@ -1,77 +1,148 @@
 package main
 
 import (
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
-
-	"github.com/skyline93/toolkit/mendb"
+	"io"
+	"os"
+	"sync"
 )
 
+type SSTable struct {
+	filePath string
+	file     *os.File
+
+	mu    sync.RWMutex
+	index map[string]int64
+}
+
+func NewSSTable(filePath string) (*SSTable, error) {
+	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SSTable{
+		filePath: filePath,
+		file:     f,
+		index:    make(map[string]int64),
+	}, nil
+}
+
+func (s *SSTable) AddRow(key string, value interface{}) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	k, err := s.encodeData(key)
+	if err != nil {
+		return err
+	}
+
+	v, err := s.encodeData(value)
+	if err != nil {
+		return err
+	}
+
+	var d []byte
+	d = append(d, k...)
+	d = append(d, v...)
+
+	offset, err := s.file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+
+	if _, err = s.file.Write(d); err != nil {
+		return err
+	}
+
+	s.index[key] = offset
+
+	return nil
+}
+
+func (s *SSTable) encodeData(data interface{}) ([]byte, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	l := make([]byte, 8)
+	binary.LittleEndian.PutUint64(l, uint64(len(b)))
+
+	var d []byte
+	d = append(d, l...)
+	d = append(d, b...)
+
+	return d, nil
+}
+
+func (s *SSTable) ReadRow(key string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	f, err := os.Open(s.filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	offset := s.index[key]
+
+	if _, err = f.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	_, err = s.decodeData(f)
+	if err != nil {
+		return nil, err
+	}
+
+	v, err := s.decodeData(f)
+	if err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (s *SSTable) decodeData(r io.Reader) ([]byte, error) {
+	b := make([]byte, 8)
+
+	if _, err := r.Read(b); err != nil {
+		return nil, err
+	}
+
+	l := binary.LittleEndian.Uint64(b)
+
+	d := make([]byte, l)
+	if _, err := r.Read(d); err != nil {
+		return nil, err
+	}
+
+	return d, nil
+}
+
 func main() {
-	// msg := "hello world"
-
-	// msgBuf := new(bytes.Buffer)
-	// err := binary.Write(msgBuf, binary.BigEndian, []byte(msg))
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// len := len(msgBuf.Bytes())
-	// fmt.Printf("msg: %v\n", msgBuf.Bytes())
-
-	// msgLen := make([]byte, 8)
-	// binary.LittleEndian.PutUint64(msgLen, uint64(len))
-
-	// fmt.Printf("msgLen: %v\n", msgLen)
-
-	// lineBuf := []byte{}
-	// lineBuf = append(lineBuf, 1)
-	// lineBuf = append(lineBuf, msgLen...)
-	// lineBuf = append(lineBuf, msgBuf.Bytes()...)
-	// lineBuf = append(lineBuf, []byte("\n")...)
-
-	// fmt.Printf("line: %v\n", lineBuf)
-
-	t, err := mendb.NewSSTable("mendbLog")
+	t, err := NewSSTable("mlog")
 	if err != nil {
 		panic(err)
 	}
 
-	// d, err := t.JoinLine("key1", []byte("hello world"), false)
-
-	// a := []int{2, 5, 6}
-	c := map[string]int{"a": 1, "b": 2, "c": 6}
-	// c := []byte("")
-
-	// r, err := json.Marshal(c)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	row := mendb.Row{
-		Key:       "key1",
-		Value:     c,
-		IsDeleted: false,
+	testdata := map[string]interface{}{
+		"key1": "abc",
 	}
-	d, err := t.EncodeRow(&row)
 
-	// d, err := json.Marshal("hello world")
+	for k, v := range testdata {
+		if err := t.AddRow(k, v); err != nil {
+			panic(err)
+		}
+	}
+
+	value, err := t.ReadRow("key1")
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("d: %v\n", d)
-
-	r, err := t.DecodeRow(d)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("r: %v\n", r)
-
-	// start, err := t.Set("abc", d)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// fmt.Printf("start: %d\n", start)
+	fmt.Printf("value: %s\n", value)
 }
