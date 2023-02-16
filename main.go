@@ -39,8 +39,8 @@ func main() {
 	// d, err := t.JoinLine("key1", []byte("hello world"), false)
 
 	// a := []int{2, 5, 6}
-	// b := map[string]int{"a": 1, "b": 2, "c": 6}
-	c := []byte("")
+	c := map[string]int{"a": 1, "b": 2, "c": 6}
+	// c := []byte("")
 
 	// r, err := json.Marshal(c)
 	// if err != nil {

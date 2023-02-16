@@ -1,9 +1,8 @@
 package mendb
 
 import (
-	"bytes"
 	"encoding/binary"
-	"fmt"
+	"encoding/json"
 	"io"
 	"os"
 	"sync"
@@ -42,23 +41,16 @@ type Row struct {
 }
 
 func (t *SSTable) EncodeRow(row *Row) ([]byte, error) {
-	keyBuf := new(bytes.Buffer)
-	err := binary.Write(keyBuf, binary.BigEndian, []byte(row.Key))
-	if err != nil {
-		return nil, err
-	}
-
-	valueBuf := new(bytes.Buffer)
-	err = binary.Write(valueBuf, binary.BigEndian, row.Value)
+	value, err := json.Marshal(row.Value)
 	if err != nil {
 		return nil, err
 	}
 
 	keyLen := make([]byte, 8)
-	binary.LittleEndian.PutUint64(keyLen, uint64(len(keyBuf.Bytes())))
+	binary.LittleEndian.PutUint64(keyLen, uint64(len(row.Key)))
 
 	valueLen := make([]byte, 8)
-	binary.LittleEndian.PutUint64(valueLen, uint64(len(valueBuf.Bytes())))
+	binary.LittleEndian.PutUint64(valueLen, uint64(len(value)))
 
 	var firstByte byte = 1
 	if row.IsDeleted {
@@ -68,9 +60,9 @@ func (t *SSTable) EncodeRow(row *Row) ([]byte, error) {
 	lineBuf := []byte{}
 	lineBuf = append(lineBuf, firstByte)
 	lineBuf = append(lineBuf, keyLen...)
-	lineBuf = append(lineBuf, keyBuf.Bytes()...)
+	lineBuf = append(lineBuf, []byte(row.Key)...)
 	lineBuf = append(lineBuf, valueLen...)
-	lineBuf = append(lineBuf, valueBuf.Bytes()...)
+	lineBuf = append(lineBuf, value...)
 	lineBuf = append(lineBuf, []byte("\n")...)
 
 	return lineBuf, nil
@@ -87,32 +79,26 @@ func (t *SSTable) DecodeRow(v []byte) (*Row, error) {
 	}
 
 	keyLen := uint64(binary.LittleEndian.Uint32(v[1:8]))
+	key := string(v[9 : 9+keyLen])
 
-	keyBuf := new(bytes.Buffer)
-
-	a := v[9 : 9+keyLen]
-	b := binary.BigEndian.Uint32(a)
-	fmt.Printf("a: %v\n", b)
-
-	err := binary.Read(keyBuf, binary.BigEndian, v[9:9+keyLen-1])
-	if err != nil {
-		return nil, err
+	valueLen := uint64(binary.LittleEndian.Uint32(v[9+keyLen : 9+keyLen+8+1]))
+	var value any
+	if valueLen != 0 {
+		err := json.Unmarshal(v[9+keyLen+8+1:9+keyLen+8+1+valueLen], value)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	a = v[9+keyLen+1 : 9+keyLen+1+8]
-	fmt.Printf("a: %v\n", a)
-
-	valueLen := binary.LittleEndian.Uint64(v[9+keyLen+1 : 9+keyLen+1+8])
-
-	valueBuf := new(bytes.Buffer)
-	err = binary.Read(valueBuf, binary.BigEndian, v[9+keyLen+8+1:9+keyLen+8+1+valueLen])
-	if err != nil {
-		return nil, err
-	}
+	// valueBuf := new(bytes.Buffer)
+	// err := binary.Read(valueBuf, binary.BigEndian, v[9+keyLen+8+1:9+keyLen+8+1+valueLen])
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return &Row{
-		// Key:       keyBuf.String(),
-		Value:     valueBuf.String(),
+		Key:       key,
+		Value:     value,
 		IsDeleted: isDeleted,
 	}, nil
 }
